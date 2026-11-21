@@ -32,6 +32,20 @@ jobs:
           cd applewin
           git rev-parse HEAD | tee ../applewin-source-commit.txt
 
+      - name: Avoid nonexistent system resource directory
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("applewin/source/frontends/common2/gnuframe.cpp")
+          text = p.read_text()
+          old = "std::filesystem::canonical(executable.parent_path() / ROOT_PATH)"
+          new = "(executable.parent_path() / ROOT_PATH).lexically_normal()"
+          assert text.count(old) == 1, "Upstream resource path code changed"
+          p.write_text(text.replace(old, new))
+          PY
+
       - name: Configure and build Libretro core
         shell: bash
         run: |
