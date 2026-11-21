@@ -1,0 +1,79 @@
+name: Build AppleWin for EmuELEC 4.6
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-applewin.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-arm64:
+    runs-on: ubuntu-24.04-arm
+    container:
+      image: ubuntu:22.04
+    steps:
+      - name: Install ARM64 build dependencies
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y --no-install-recommends git ca-certificates cmake ninja-build build-essential pkg-config python3 file binutils
+          apt-get install -y --no-install-recommends libpcap-dev libslirp-dev libyaml-dev zlib1g-dev libncurses-dev libevdev-dev libsdl2-dev libsdl2-image-dev || true
+
+      - name: Clone AppleWin with submodules
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git clone --recurse-submodules --depth 1 https://github.com/audetto/AppleWin.git applewin
+          cd applewin
+          git rev-parse HEAD | tee ../applewin-source-commit.txt
+
+      - name: Configure and build Libretro core
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cmake -S applewin -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_LIBRETRO=ON -DBUILD_APPLEN=OFF -DBUILD_SA2=OFF -DBUILD_QAPPLE=OFF -DSTATIC_LINKING=ON
+          cmake --build build --target applewin_libretro -j 2
+
+      - name: Check EmuELEC 4.6 ABI compatibility
+        shell: bash
+        run: |
+          set -euxo pipefail
+          CORE=build/source/frontends/libretro/applewin_libretro.so
+          test -s "$CORE"
+          file "$CORE"
+          readelf -h "$CORE" | tee elf-header.txt
+          readelf -d "$CORE" | tee dynamic-deps.txt
+          readelf --version-info "$CORE" | tee symbol-versions.txt
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          s=Path("symbol-versions.txt").read_text()
+          def versions(prefix):
+              return sorted(set(tuple(map(int, x.split("."))) for x in re.findall(r'\\b'+prefix+r'_(\\d+(?:\\.\\d+)+)', s)))
+          for label, limit in [('GLIBC',(2,36)),('GLIBCXX',(3,4,30)),('CXXABI',(1,3,13))]:
+              actual=versions(label)
+              print(f"{label}: highest requested={actual[-1] if actual else 'none'}, allowed={limit}")
+              if actual and actual[-1] > limit:
+                  raise SystemExit(f"{label} ABI requirement exceeds EmuELEC target")
+          header=Path("elf-header.txt").read_text()
+          if "AArch64" not in header:
+              raise SystemExit("Core is not AArch64")
+          print("ABI version checks passed. Actual device runtime test still required.")
+          PY
+          mkdir -p output
+          cp "$CORE" output/
+          if test -f build/source/frontends/libretro/applewin_libretro.info; then cp build/source/frontends/libretro/applewin_libretro.info output/; fi
+          cp applewin-source-commit.txt output/
+          cp symbol-versions.txt dynamic-deps.txt output/
+
+      - name: Upload candidate (only after ABI validation)
+        uses: actions/upload-artifact@v4
+        with:
+          name: applewin-emuelec46-arm64-candidate
+          path: output/
+          if-no-files-found: error
