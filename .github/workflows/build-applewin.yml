@@ -21,7 +21,7 @@ jobs:
           set -euxo pipefail
           export DEBIAN_FRONTEND=noninteractive
           apt-get update
-          apt-get install -y --no-install-recommends git ca-certificates cmake ninja-build build-essential pkg-config python3 file binutils
+          apt-get install -y --no-install-recommends git ca-certificates cmake ninja-build build-essential pkg-config python3 file binutils xxd
           apt-get install -y --no-install-recommends libpcap-dev libslirp-dev libyaml-dev zlib1g-dev libncurses-dev libevdev-dev libsdl2-dev libsdl2-image-dev || true
 
       - name: Clone AppleWin with submodules
